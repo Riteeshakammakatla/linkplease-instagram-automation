@@ -19,6 +19,13 @@ from ..services.dm_service import process_dm_delivery
 
 router = APIRouter()
 
+LAST_WEBHOOK_DEBUG = {}
+
+
+@router.get("/debug-last-webhook")
+def get_debug_last_webhook():
+    return LAST_WEBHOOK_DEBUG
+
 
 def get_db():
     db = SessionLocal()
@@ -82,6 +89,20 @@ async def receive_webhook(
     # Safe key fingerprints
     key_hash_raw = hashlib.sha256(api_key_raw.encode()).hexdigest()[:8]
     key_hash_clean = hashlib.sha256(api_key_clean.encode()).hexdigest()[:8]
+
+    global LAST_WEBHOOK_DEBUG
+    LAST_WEBHOOK_DEBUG = {
+        "headers": dict(request.headers),
+        "received_signature": received_signature,
+        "expected_signature": expected_signature,
+        "expected_signature_clean": expected_signature_clean,
+        "raw_body_len": len(body),
+        "raw_body_str": body.decode("utf-8", errors="replace"),
+        "key_raw_len": len(api_key_raw),
+        "key_clean_len": len(api_key_clean),
+        "key_hash_raw": key_hash_raw,
+        "key_hash_clean": key_hash_clean,
+    }
 
     # Debug logs for Render
     print("=== DEBUG WEBHOOK START ===", flush=True)
