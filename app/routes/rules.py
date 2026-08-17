@@ -26,8 +26,8 @@ def create_rule(rule: RuleCreate, db: Session = Depends(get_db)):
 
     new_rule = Rule(
         id=rule_id,
-        keyword=rule.keyword,
-        dm_message=rule.dm_message
+        keyword=rule.keyword.strip(),
+        dm_message=rule.dm_message.strip()
     )
 
     db.add(new_rule)

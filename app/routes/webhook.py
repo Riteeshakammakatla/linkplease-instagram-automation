@@ -249,10 +249,16 @@ async def receive_webhook(
                 .first()
             )
 
-            if counter:
-
+            if not counter:
+                counter = StatCounter(
+                    id="global",
+                    duplicates_blocked=1
+                )
+                db.add(counter)
+            else:
                 counter.duplicates_blocked += 1
-                db.commit()
+
+            db.commit()
 
         # -------------------------------------
         # NEW DM

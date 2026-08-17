@@ -10,9 +10,11 @@ def find_matching_rules(comment_text: str, db: Session):
     rules = db.query(Rule).all()
 
     matching_rules = []
+    text_lower = (comment_text or "").lower()
 
     for rule in rules:
-        if rule.keyword.lower() in comment_text.lower():
+        keyword_clean = (rule.keyword or "").strip().lower()
+        if keyword_clean and keyword_clean in text_lower:
             matching_rules.append(rule)
 
     return matching_rules
