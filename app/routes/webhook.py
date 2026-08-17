@@ -19,13 +19,6 @@ from ..services.dm_service import process_dm_delivery
 
 router = APIRouter()
 
-LAST_WEBHOOK_DEBUG = {}
-
-
-@router.get("/debug-last-webhook")
-def get_debug_last_webhook():
-    return LAST_WEBHOOK_DEBUG
-
 
 def get_db():
     db = SessionLocal()
@@ -67,71 +60,36 @@ async def receive_webhook(
     # 3. CALCULATE EXPECTED SIGNATURE
     # -----------------------------------------
 
-    api_key_raw = PSEUDOGRAM_API_KEY or ""
-    api_key_clean = api_key_raw.strip()
+    api_key = (PSEUDOGRAM_API_KEY or "").strip()
 
     expected_hash = hmac.new(
-        api_key_raw.encode(),
+        api_key.encode("utf-8"),
         body,
         hashlib.sha256
     ).hexdigest()
-
-    expected_signature = f"sha256={expected_hash}"
-
-    expected_hash_clean = hmac.new(
-        api_key_clean.encode(),
-        body,
-        hashlib.sha256
-    ).hexdigest()
-
-    expected_signature_clean = f"sha256={expected_hash_clean}"
-
-    # Safe key fingerprints
-    key_hash_raw = hashlib.sha256(api_key_raw.encode()).hexdigest()[:8]
-    key_hash_clean = hashlib.sha256(api_key_clean.encode()).hexdigest()[:8]
-
-    global LAST_WEBHOOK_DEBUG
-    LAST_WEBHOOK_DEBUG = {
-        "headers": dict(request.headers),
-        "received_signature": received_signature,
-        "expected_signature": expected_signature,
-        "expected_signature_clean": expected_signature_clean,
-        "raw_body_len": len(body),
-        "raw_body_str": body.decode("utf-8", errors="replace"),
-        "key_raw_len": len(api_key_raw),
-        "key_clean_len": len(api_key_clean),
-        "key_hash_raw": key_hash_raw,
-        "key_hash_clean": key_hash_clean,
-    }
-
-    # Debug logs for Render
-    print("=== DEBUG WEBHOOK START ===", flush=True)
-    print(f"DEBUG: headers={dict(request.headers)}", flush=True)
-    print(f"DEBUG: received_signature={received_signature!r}", flush=True)
-    print(f"DEBUG: expected_signature={expected_signature!r}", flush=True)
-    print(f"DEBUG: expected_signature_clean={expected_signature_clean!r}", flush=True)
-    print(f"DEBUG: raw_body_len={len(body)}", flush=True)
-    print(f"DEBUG: raw_body_sample={body[:100]!r}", flush=True)
-    print(f"DEBUG: key_raw_len={len(api_key_raw)}, key_clean_len={len(api_key_clean)}", flush=True)
-    print(f"DEBUG: key_hash_raw={key_hash_raw}, key_hash_clean={key_hash_clean}", flush=True)
-    print("=== DEBUG WEBHOOK END ===", flush=True)
 
     # -----------------------------------------
     # 4. COMPARE SIGNATURES SAFELY
     # -----------------------------------------
 
+    clean_received = received_signature.strip()
+    if clean_received.lower().startswith("sha256="):
+        clean_received = clean_received[7:].strip()
+    elif clean_received.lower().startswith("sha256:"):
+        clean_received = clean_received[7:].strip()
+
     if not hmac.compare_digest(
-        received_signature,
-        expected_signature
+        clean_received.lower(),
+        expected_hash.lower()
     ):
-        print("Invalid webhook signature", flush=True)
+        print("Invalid webhook signature")
 
         raise HTTPException(
             status_code=401,
-            detail=f"Invalid webhook signature. Recv: {received_signature}, Exp: {expected_signature}, ExpClean: {expected_signature_clean}"
+            detail="Invalid webhook signature"
         )
 
-    print("Webhook signature verified", flush=True)
+    print("Webhook signature verified")
 
     # -----------------------------------------
     # 5. PARSE JSON BODY
