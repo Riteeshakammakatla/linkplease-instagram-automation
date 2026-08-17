@@ -41,7 +41,7 @@ def debug_state():
             "stat_counter": {
                 "duplicates_blocked": counter.duplicates_blocked if counter else None
             },
-            "database_url": "sqlite:///./linkplease.db"
+            "database_url": "postgresql" if "postgres" in str(db.get_bind().url) else "sqlite"
         }
     finally:
         db.close()

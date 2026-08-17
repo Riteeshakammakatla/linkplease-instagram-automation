@@ -13,3 +13,5 @@ PSEUDOGRAM_BASE_URL = (
         "https://pseudogram-api.onrender.com"
     ) or ""
 ).strip()
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./linkplease.db").strip()
