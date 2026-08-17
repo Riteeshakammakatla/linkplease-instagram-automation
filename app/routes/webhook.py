@@ -60,13 +60,40 @@ async def receive_webhook(
     # 3. CALCULATE EXPECTED SIGNATURE
     # -----------------------------------------
 
+    api_key_raw = PSEUDOGRAM_API_KEY or ""
+    api_key_clean = api_key_raw.strip()
+
     expected_hash = hmac.new(
-        PSEUDOGRAM_API_KEY.encode(),
+        api_key_raw.encode(),
         body,
         hashlib.sha256
     ).hexdigest()
 
     expected_signature = f"sha256={expected_hash}"
+
+    expected_hash_clean = hmac.new(
+        api_key_clean.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+
+    expected_signature_clean = f"sha256={expected_hash_clean}"
+
+    # Safe key fingerprints
+    key_hash_raw = hashlib.sha256(api_key_raw.encode()).hexdigest()[:8]
+    key_hash_clean = hashlib.sha256(api_key_clean.encode()).hexdigest()[:8]
+
+    # Debug logs for Render
+    print("=== DEBUG WEBHOOK START ===", flush=True)
+    print(f"DEBUG: headers={dict(request.headers)}", flush=True)
+    print(f"DEBUG: received_signature={received_signature!r}", flush=True)
+    print(f"DEBUG: expected_signature={expected_signature!r}", flush=True)
+    print(f"DEBUG: expected_signature_clean={expected_signature_clean!r}", flush=True)
+    print(f"DEBUG: raw_body_len={len(body)}", flush=True)
+    print(f"DEBUG: raw_body_sample={body[:100]!r}", flush=True)
+    print(f"DEBUG: key_raw_len={len(api_key_raw)}, key_clean_len={len(api_key_clean)}", flush=True)
+    print(f"DEBUG: key_hash_raw={key_hash_raw}, key_hash_clean={key_hash_clean}", flush=True)
+    print("=== DEBUG WEBHOOK END ===", flush=True)
 
     # -----------------------------------------
     # 4. COMPARE SIGNATURES SAFELY
@@ -76,14 +103,14 @@ async def receive_webhook(
         received_signature,
         expected_signature
     ):
-        print("Invalid webhook signature")
+        print("Invalid webhook signature", flush=True)
 
         raise HTTPException(
             status_code=401,
-            detail="Invalid webhook signature"
+            detail=f"Invalid webhook signature. Recv: {received_signature}, Exp: {expected_signature}, ExpClean: {expected_signature_clean}"
         )
 
-    print("Webhook signature verified")
+    print("Webhook signature verified", flush=True)
 
     # -----------------------------------------
     # 5. PARSE JSON BODY
