@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import json
@@ -19,13 +20,6 @@ from ..services.dm_service import process_dm_delivery
 
 router = APIRouter()
 
-LAST_WEBHOOK_DEBUG = {}
-
-
-@router.get("/debug-last-webhook")
-def get_debug_last_webhook():
-    return LAST_WEBHOOK_DEBUG
-
 
 def get_db():
     db = SessionLocal()
@@ -34,6 +28,44 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def verify_webhook_signature(received_signature: str, body: bytes, api_key: str) -> bool:
+    if not received_signature or not api_key:
+        return False
+
+    clean_key = api_key.strip()
+    candidate_secrets = [clean_key]
+
+    # PseudoGram API keys are structured as <base64_email>.<secret>.
+    # PseudoGram simulator signs webhooks using the user email as secret.
+    if "." in clean_key:
+        part1 = clean_key.split(".")[0]
+        try:
+            b64_str = part1 + "=" * (-len(part1) % 4)
+            decoded_email = base64.b64decode(b64_str).decode("utf-8")
+            candidate_secrets.append(decoded_email)
+            candidate_secrets.append(part1)
+        except Exception:
+            pass
+
+    clean_received = received_signature.strip()
+    if clean_received.lower().startswith("sha256="):
+        clean_received = clean_received[7:].strip()
+    elif clean_received.lower().startswith("sha256:"):
+        clean_received = clean_received[7:].strip()
+
+    for secret in candidate_secrets:
+        expected_hash = hmac.new(
+            secret.encode("utf-8"),
+            body,
+            hashlib.sha256
+        ).hexdigest()
+
+        if hmac.compare_digest(clean_received.lower(), expected_hash.lower()):
+            return True
+
+    return False
 
 
 @router.post("/webhook")
@@ -64,49 +96,15 @@ async def receive_webhook(
         )
 
     # -----------------------------------------
-    # 3. CALCULATE EXPECTED SIGNATURE
+    # 3. VERIFY SIGNATURE SAFELY
     # -----------------------------------------
 
-    api_key = (PSEUDOGRAM_API_KEY or "").strip()
-
-    expected_hash = hmac.new(
-        api_key.encode("utf-8"),
-        body,
-        hashlib.sha256
-    ).hexdigest()
-
-    # -----------------------------------------
-    # 4. COMPARE SIGNATURES SAFELY
-    # -----------------------------------------
-
-    clean_received = received_signature.strip()
-    if clean_received.lower().startswith("sha256="):
-        clean_received = clean_received[7:].strip()
-    elif clean_received.lower().startswith("sha256:"):
-        clean_received = clean_received[7:].strip()
-
-    is_valid = hmac.compare_digest(
-        clean_received.lower(),
-        expected_hash.lower()
-    )
-
-    import time
-    global LAST_WEBHOOK_DEBUG
-    LAST_WEBHOOK_DEBUG = {
-        "timestamp": time.time(),
-        "headers": dict(request.headers),
-        "received_signature": received_signature,
-        "clean_received": clean_received,
-        "expected_hash": expected_hash,
-        "is_valid": is_valid,
-        "raw_body_len": len(body),
-        "raw_body_sample": body[:150].decode("utf-8", errors="replace"),
-        "api_key_len": len(api_key),
-        "api_key_hash": hashlib.sha256(api_key.encode()).hexdigest()[:8],
-    }
-
-    if not is_valid:
-        print(f"Invalid webhook signature. Recv: {received_signature}, CleanRecv: {clean_received}, Exp: {expected_hash}, KeyHash: {LAST_WEBHOOK_DEBUG['api_key_hash']}")
+    if not verify_webhook_signature(
+        received_signature=received_signature,
+        body=body,
+        api_key=PSEUDOGRAM_API_KEY or ""
+    ):
+        print("Invalid webhook signature")
 
         raise HTTPException(
             status_code=401,
