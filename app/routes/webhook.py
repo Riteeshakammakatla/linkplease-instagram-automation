@@ -19,6 +19,13 @@ from ..services.dm_service import process_dm_delivery
 
 router = APIRouter()
 
+LAST_WEBHOOK_DEBUG = {}
+
+
+@router.get("/debug-last-webhook")
+def get_debug_last_webhook():
+    return LAST_WEBHOOK_DEBUG
+
 
 def get_db():
     db = SessionLocal()
@@ -78,11 +85,28 @@ async def receive_webhook(
     elif clean_received.lower().startswith("sha256:"):
         clean_received = clean_received[7:].strip()
 
-    if not hmac.compare_digest(
+    is_valid = hmac.compare_digest(
         clean_received.lower(),
         expected_hash.lower()
-    ):
-        print("Invalid webhook signature")
+    )
+
+    import time
+    global LAST_WEBHOOK_DEBUG
+    LAST_WEBHOOK_DEBUG = {
+        "timestamp": time.time(),
+        "headers": dict(request.headers),
+        "received_signature": received_signature,
+        "clean_received": clean_received,
+        "expected_hash": expected_hash,
+        "is_valid": is_valid,
+        "raw_body_len": len(body),
+        "raw_body_sample": body[:150].decode("utf-8", errors="replace"),
+        "api_key_len": len(api_key),
+        "api_key_hash": hashlib.sha256(api_key.encode()).hexdigest()[:8],
+    }
+
+    if not is_valid:
+        print(f"Invalid webhook signature. Recv: {received_signature}, CleanRecv: {clean_received}, Exp: {expected_hash}, KeyHash: {LAST_WEBHOOK_DEBUG['api_key_hash']}")
 
         raise HTTPException(
             status_code=401,
