@@ -68,7 +68,8 @@ async def process_dm_delivery(delivery_id: str):
             response = await client.send_dm(
                 recipient_user_id=delivery.user_id,
                 message=rule.dm_message,
-                comment_id=delivery.comment_id
+                comment_id=delivery.comment_id,
+                idempotency_key=delivery.id
             )
 
             # --------------------------------

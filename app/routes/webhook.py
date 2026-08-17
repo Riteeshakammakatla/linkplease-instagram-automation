@@ -23,7 +23,7 @@ router = APIRouter()
 
 @router.get("/debug/state")
 def debug_state():
-    """Temporary diagnostic endpoint to inspect DB state on Render."""
+    """Diagnostic endpoint to inspect DB state."""
     db = SessionLocal()
     try:
         rules = db.query(Rule).all()
@@ -60,7 +60,7 @@ def get_candidate_secrets(api_key: str) -> list[str]:
     """
     Extract all possible candidate secrets from PSEUDOGRAM_API_KEY.
     PseudoGram API keys follow the structure: `<base64_email>.<secret_token>`
-    
+
     Candidates tested for HMAC-SHA256 verification:
     1. Full API key string (used by manual Postman / client requests)
     2. Secret token portion after the dot (`part2`)
@@ -148,7 +148,7 @@ async def receive_webhook(
         )
 
     # -----------------------------------------
-    # 3. VERIFY SIGNATURE SAFELY
+    # 3. VERIFY SIGNATURE
     # -----------------------------------------
 
     if not verify_webhook_signature(
@@ -156,39 +156,30 @@ async def receive_webhook(
         body=body,
         api_key=PSEUDOGRAM_API_KEY or ""
     ):
-        print("Invalid webhook signature")
-
         raise HTTPException(
             status_code=401,
             detail="Invalid webhook signature"
         )
 
-    print("[DIAG] Webhook signature verified")
-
     # -----------------------------------------
-    # 5. PARSE JSON BODY
+    # 4. PARSE JSON BODY
     # -----------------------------------------
 
     try:
         payload = json.loads(body)
-
-        event = WebhookEvent.model_validate(
-            payload
-        )
+        event = WebhookEvent.model_validate(payload)
 
     except Exception:
-
         raise HTTPException(
             status_code=400,
             detail="Invalid webhook payload"
         )
 
     # -----------------------------------------
-    # 6. EVENT DEDUPLICATION
+    # 5. EVENT DEDUPLICATION
     # -----------------------------------------
 
     try:
-
         processed_event = ProcessedEvent(
             event_id=event.event_id,
             event_type=event.event_type
@@ -198,39 +189,54 @@ async def receive_webhook(
         db.commit()
 
     except IntegrityError:
-
         db.rollback()
-
-        print(
-            "[DIAG] Duplicate event blocked:",
-            event.event_id
-        )
-
-        return {
-            "status": "received"
-        }
+        return {"status": "received"}
 
     # -----------------------------------------
-    # 7. ONLY PROCESS COMMENT.CREATED
+    # 6. HANDLE comment.deleted
+    # Cancel any queued DMs for this comment
+    # before they are sent.
+    # -----------------------------------------
+
+    if event.event_type == "comment.deleted":
+
+        comment_id = event.data.comment_id
+
+        # Cancel all deliveries still waiting in the queue
+        # for this comment. If a delivery has already moved
+        # past "queued" (sending / accepted / delivered /
+        # failed) we leave it — it's too late to stop it.
+        cancelled = (
+            db.query(DMDelivery)
+            .filter(
+                DMDelivery.comment_id == comment_id,
+                DMDelivery.status == "queued"
+            )
+            .all()
+        )
+
+        for delivery in cancelled:
+            delivery.status = "cancelled"
+
+        if cancelled:
+            db.commit()
+            print(f"Cancelled {len(cancelled)} queued DMs for deleted comment {comment_id}")
+
+        return {"status": "received"}
+
+    # -----------------------------------------
+    # 7. ONLY PROCESS comment.created
     # -----------------------------------------
 
     if event.event_type != "comment.created":
-
-        print(f"[DIAG] Skipping non-comment event: type={event.event_type}")
-        return {
-            "status": "received"
-        }
+        return {"status": "received"}
 
     # -----------------------------------------
     # 8. VALIDATE COMMENT DATA
     # -----------------------------------------
 
     if not event.data.text or not event.data.from_:
-
-        print(f"[DIAG] Skipping: text={event.data.text!r}, from={event.data.from_}")
-        return {
-            "status": "received"
-        }
+        return {"status": "received"}
 
     user_id = event.data.from_.user_id
     comment_id = event.data.comment_id
@@ -239,15 +245,10 @@ async def receive_webhook(
     # 9. FIND MATCHING RULES
     # -----------------------------------------
 
-    all_rules = db.query(Rule).all()
-    print(f"[DIAG] event_id={event.event_id}, text={event.data.text!r}, user={event.data.from_.user_id}")
-    print(f"[DIAG] Total rules in DB: {len(all_rules)}, keywords: {[r.keyword for r in all_rules]}")
-
     matching_rules = find_matching_rules(
         event.data.text,
         db
     )
-    print(f"[DIAG] Matching rules: {len(matching_rules)}, matched: {[r.keyword for r in matching_rules]}")
 
     # -----------------------------------------
     # 10. CREATE DM DELIVERIES
@@ -263,14 +264,10 @@ async def receive_webhook(
         )
 
         # -------------------------------------
-        # DUPLICATE DM
+        # DUPLICATE DM — same user, same rule
         # -------------------------------------
 
         if duplicate:
-
-            print(
-                f"[DIAG] Duplicate DM blocked: user={user_id}, keyword={rule.keyword}"
-            )
 
             counter = (
                 db.query(StatCounter)
@@ -292,25 +289,18 @@ async def receive_webhook(
             db.commit()
 
         # -------------------------------------
-        # NEW DM
+        # NEW DM — queue and process
         # -------------------------------------
 
         else:
-
-            print(
-                f"[DIAG] DM delivery created: id={delivery.id}, user={user_id}, keyword={rule.keyword}"
-            )
 
             background_tasks.add_task(
                 process_dm_delivery,
                 delivery.id
             )
-            print(f"[DIAG] Background task scheduled for delivery {delivery.id}")
 
     # -----------------------------------------
     # 11. RETURN QUICKLY
     # -----------------------------------------
 
-    return {
-        "status": "received"
-    }
+    return {"status": "received"}

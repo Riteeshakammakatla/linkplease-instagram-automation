@@ -19,7 +19,8 @@ class PseudoGramClient:
         self,
         recipient_user_id: str,
         message: str,
-        comment_id: str
+        comment_id: str,
+        idempotency_key: str | None = None
     ):
         url = f"{self.base_url}/v1/dm/send"
 
@@ -29,11 +30,15 @@ class PseudoGramClient:
             "comment_id": comment_id
         }
 
+        headers = dict(self.headers)
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 url,
                 json=payload,
-                headers=self.headers
+                headers=headers
             )
 
         return response
